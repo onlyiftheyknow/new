@@ -1,0 +1,18 @@
+name: iOS Simulator
+on: [workflow_dispatch]
+jobs:
+  sim:
+    runs-on: macos-latest
+    steps:
+      - name: Boot Simulator
+        run: |
+          xcrun simctl boot "iPhone 15"
+          open -a Simulator
+          # Install a VNC server to control it
+          brew install --cask ngrok
+          brew install --cask vnc-viewer
+          # Set up a VNC server for the Simulator window
+          # Use x11vnc or macOS screen sharing
+          sudo /usr/bin/python3 -m http.server 8080 &
+          # Keep alive
+          sleep 21600
