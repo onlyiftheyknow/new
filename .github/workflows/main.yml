@@ -1,10 +1,10 @@
-name: iPhone Simulator
+name: iPhone Simulator Live Stream
 
 on:
   workflow_dispatch:
     inputs:
       duration:
-        description: 'How long to keep alive (minutes)'
+        description: 'How long to keep alive (minutes, max 360)'
         required: true
         default: '60'
       url:
@@ -13,59 +13,75 @@ on:
         default: 'https://example.com'
 
 jobs:
-  run-simulator:
+  live-simulator:
     runs-on: macos-latest
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Boot iOS Simulator
+      - name: Boot iOS Simulator and Stream
         run: |
-          # List available device types to pick a valid one
-          echo "=== Available iPhone device types ==="
-          xcrun simctl list devicetypes | grep iPhone | head -20
-          
-          # Choose first iPhone device type (e.g., com.apple.CoreSimulator.SimDeviceType.iPhone-14)
-          DEVICE_TYPE=$(xcrun simctl list devicetypes | grep -m1 'iPhone' | awk '{print $2}')
+          # Get a valid device type identifier
+          DEVICE_TYPE=$(xcrun simctl list devicetypes | grep -m1 'iPhone' | sed -E 's/.*\(([^)]+)\)/\1/')
           echo "Using device type: $DEVICE_TYPE"
-          
-          # Create a simulator device with a custom name
+
+          # Create simulator
           UDID=$(xcrun simctl create "GhostPhone" "$DEVICE_TYPE")
-          echo "Created simulator UDID: $UDID"
-          
-          # Boot the simulator
+          echo "Simulator UDID: $UDID"
+
+          # Boot and wait
           xcrun simctl boot "$UDID"
-          
-          # Wait for full boot
           xcrun simctl bootstatus "$UDID" -b
           echo "Simulator booted."
-          
-          # Open Safari with the provided URL
+
+          # Open Safari
           xcrun simctl openurl "$UDID" "${{ github.event.inputs.url }}"
-          
-          # Keep the process alive for the requested duration (or default 60 minutes)
+
+          # Start screenshot loop in background
+          mkdir -p ~/screenshots
+          (
+            while true; do
+              xcrun simctl io "$UDID" screenshot ~/screenshots/screen.png
+              sleep 10
+            done
+          ) &
+
+          # Serve screenshots via HTTP
+          cd ~/screenshots
+          nohup python3 -m http.server 8080 > /tmp/http.log 2>&1 &
+
+          # Expose HTTP port via cloudflared (free, no account)
+          brew install cloudflared
+          nohup cloudflared tunnel --url http://localhost:8080 > /tmp/cloudflared.log 2>&1 &
+          sleep 15  # wait for tunnel to establish
+
+          # Extract the public URL from cloudflared log
+          PUBLIC_URL=$(grep -o 'https://[a-zA-Z0-9.-]*trycloudflare.com' /tmp/cloudflared.log | head -1)
+          echo "========================================="
+          echo "LIVE SIMULATOR VIEW URL: $PUBLIC_URL"
+          echo "Open that URL in your PC browser. It auto-refreshes every 10 seconds."
+          echo "========================================="
+
+          # Keep alive for the requested duration
           DURATION_MINUTES=${{ github.event.inputs.duration }}
           echo "Keeping alive for $DURATION_MINUTES minutes..."
           sleep $((DURATION_MINUTES * 60))
-          
-          # Take a final screenshot before exit
+
+          # Final screenshot
           xcrun simctl io "$UDID" screenshot final.png
-          echo "Screenshot taken."
-      
-      - name: Upload screenshots and logs
+          echo "Final screenshot saved."
+
+      - name: Upload final screenshot
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: simulator-output
-          path: |
-            final.png
-            *.log
-            *.txt
+          name: final-screenshot
+          path: final.png
           retention-days: 7
 
-      - name: Expose via tmate for interactive session (optional)
+      - name: Interactive SSH via tmate (optional)
         if: always()
         uses: mxschmitt/action-tmate@v3
-        timeout-minutes: 30
         with:
           limit-access-to-actor: true
+          timeout-minutes: 30
