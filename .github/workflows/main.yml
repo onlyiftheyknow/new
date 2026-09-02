@@ -1,12 +1,71 @@
-      - name: Install and start VNC server
+name: iPhone Simulator
+
+on:
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: 'How long to keep alive (minutes)'
+        required: true
+        default: '60'
+      url:
+        description: 'URL to open in Safari'
+        required: false
+        default: 'https://example.com'
+
+jobs:
+  run-simulator:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Boot iOS Simulator
         run: |
-          brew install --cask tigervnc-viewer
-          brew install tigervnc-server
-          # Start a VNC server on display :1
-          vncserver :1 -geometry 1280x720 -depth 24
-          # Forward port 5901 via cloudflared (free, no account needed)
-          brew install cloudflared
-          cloudflared tunnel --url http://localhost:5901 &
-          sleep 10
-          # Print the tunnel URL from logs (or use ngrok with auth token)
-          grep -o 'https://.*trycloudflare.com' nohup.out | head -1
+          # List available device types to pick a valid one
+          echo "=== Available iPhone device types ==="
+          xcrun simctl list devicetypes | grep iPhone | head -20
+          
+          # Choose first iPhone device type (e.g., com.apple.CoreSimulator.SimDeviceType.iPhone-14)
+          DEVICE_TYPE=$(xcrun simctl list devicetypes | grep -m1 'iPhone' | awk '{print $2}')
+          echo "Using device type: $DEVICE_TYPE"
+          
+          # Create a simulator device with a custom name
+          UDID=$(xcrun simctl create "GhostPhone" "$DEVICE_TYPE")
+          echo "Created simulator UDID: $UDID"
+          
+          # Boot the simulator
+          xcrun simctl boot "$UDID"
+          
+          # Wait for full boot
+          xcrun simctl bootstatus "$UDID" -b
+          echo "Simulator booted."
+          
+          # Open Safari with the provided URL
+          xcrun simctl openurl "$UDID" "${{ github.event.inputs.url }}"
+          
+          # Keep the process alive for the requested duration (or default 60 minutes)
+          DURATION_MINUTES=${{ github.event.inputs.duration }}
+          echo "Keeping alive for $DURATION_MINUTES minutes..."
+          sleep $((DURATION_MINUTES * 60))
+          
+          # Take a final screenshot before exit
+          xcrun simctl io "$UDID" screenshot final.png
+          echo "Screenshot taken."
+      
+      - name: Upload screenshots and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: simulator-output
+          path: |
+            final.png
+            *.log
+            *.txt
+          retention-days: 7
+
+      - name: Expose via tmate for interactive session (optional)
+        if: always()
+        uses: mxschmitt/action-tmate@v3
+        timeout-minutes: 30
+        with:
+          limit-access-to-actor: true
