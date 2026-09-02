@@ -1,18 +1,12 @@
-name: iOS Simulator
-on: [workflow_dispatch]
-jobs:
-  sim:
-    runs-on: macos-latest
-    steps:
-      - name: Boot Simulator
+      - name: Install and start VNC server
         run: |
-          xcrun simctl boot "iPhone 15"
-          open -a Simulator
-          # Install a VNC server to control it
-          brew install --cask ngrok
-          brew install --cask vnc-viewer
-          # Set up a VNC server for the Simulator window
-          # Use x11vnc or macOS screen sharing
-          sudo /usr/bin/python3 -m http.server 8080 &
-          # Keep alive
-          sleep 21600
+          brew install --cask tigervnc-viewer
+          brew install tigervnc-server
+          # Start a VNC server on display :1
+          vncserver :1 -geometry 1280x720 -depth 24
+          # Forward port 5901 via cloudflared (free, no account needed)
+          brew install cloudflared
+          cloudflared tunnel --url http://localhost:5901 &
+          sleep 10
+          # Print the tunnel URL from logs (or use ngrok with auth token)
+          grep -o 'https://.*trycloudflare.com' nohup.out | head -1
